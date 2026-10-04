@@ -1,0 +1,1 @@
+{ "name": "devhud", "version": "0.1.0", "description": "cost, context and git hud with an ember theme", "types": "./types/index.d.ts" }
