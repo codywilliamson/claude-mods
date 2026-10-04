@@ -11,6 +11,8 @@ const TITLE = 'HUD'
 const RING_SIZE = 72
 const BAR_CELLS = 20
 const MINI_BAR_CELLS = 10
+const MINI_BAR_WIDTH = 64
+const MINI_BAR_HEIGHT = 6
 const MAX_AGENT_ROWS = 4
 const REPO_COMMAND = /\bgh pr\b|\bgit (push|commit|switch|checkout)\b/
 
@@ -40,14 +42,6 @@ const elapsed = (ms: number) => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
 }
 
-const statusText = (u: Usage | null, g: Git | null) =>
-  [
-    u && money(u.usd),
-    u?.ctxPercent != null && `${u.ctxPercent}% ctx`,
-    g && `${g.branch}${dirty(g) ? '*' : ''}`,
-  ]
-    .filter(Boolean)
-    .join(' · ')
 
 const ring = (percent: number) => {
   const r = 30
@@ -66,14 +60,36 @@ const bar = (percent: number, cells = BAR_CELLS) => {
   return '█'.repeat(filled) + '░'.repeat(cells - filled)
 }
 
+const miniBar = (percent: number) => {
+  const fill = Math.max(MINI_BAR_HEIGHT, (MINI_BAR_WIDTH * percent) / 100)
+  const r = MINI_BAR_HEIGHT / 2
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${MINI_BAR_WIDTH}" height="${MINI_BAR_HEIGHT}">
+<rect width="${MINI_BAR_WIDTH}" height="${MINI_BAR_HEIGHT}" rx="${r}" fill="${THEME.border}"/>
+<rect width="${fill}" height="${MINI_BAR_HEIGHT}" rx="${r}" fill="${levelColor(percent)}"/>
+</svg>`
+}
+
 const ciColor = (p: Pr) => (p.fail > 0 ? THEME.hot : p.pending > 0 ? THEME.warn : THEME.ok)
+
+const gitLabel = (g: Git | null) => {
+  if (g === null) return 'no repo'
+  const sync = [g.ahead > 0 && `↑${g.ahead}`, g.behind > 0 && `↓${g.behind}`].filter(Boolean).join(' ')
+  const changes = dirty(g) ? `+${g.staged} ~${g.unstaged} ?${g.untracked}` : ''
+  return [g.branch, sync, changes].filter(Boolean).join(' ')
+}
+
+// desktop already shows the pr number in its own bar
+const prLabel = (p: Pr, withNumber: boolean) =>
+  `${withNumber ? `#${p.number} ` : ''}→ ${p.base}${p.isDraft ? ' (draft)' : ''}`
+
+const ciLabel = (p: Pr) =>
+  ['ci', `✓${p.pass}`, p.fail > 0 && `✗${p.fail}`, p.pending > 0 && `…${p.pending}`].filter(Boolean).join(' ')
 
 async function syncRepo($: EngineInterface) {
   const run = (argv: readonly string[]) => $.process.run(argv)
   const [g, p] = await Promise.all([readGit(run).catch(() => null), readPr(run).catch(() => null)])
   await update($, git, () => g)
   await update($, pr, () => p)
-  $.ui.status(statusText(await read($, usage), g) || undefined)
 }
 
 async function syncAgents($: EngineInterface) {
@@ -102,7 +118,6 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     const u = toUsage(e)
     await update($, usage, () => u)
-    $.ui.status(statusText(u, await read($, git)) || undefined)
     return next(e)
   })
 
@@ -149,7 +164,8 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text } = els
     const u = await read($, usage)
     const g = await read($, git)
     const p = await read($, pr)
@@ -158,61 +174,41 @@ export const register: Register = on => {
     const pct = u?.ctxPercent ?? null
     const running = rows.filter(isRunning)
     const done = rows.length - running.length
-    const sep = <Text color={THEME.border}> │ </Text>
+    const isDesktop = e.surface === 'desktop'
+    const sep = <Text color={THEME.muted}>·</Text>
+    const gauge =
+      pct === null ? (
+        <Text color={THEME.muted}>ctx --</Text>
+      ) : isDesktop && 'Svg' in els ? (
+        <els.Svg source={miniBar(pct)} alt={`context ${pct}% full`} width={MINI_BAR_WIDTH} height={MINI_BAR_HEIGHT} />
+      ) : (
+        <Text color={levelColor(pct)}>{bar(pct, MINI_BAR_CELLS)}</Text>
+      )
 
     return (
-      <Box flexDirection="column" paddingX={1} backgroundColor={THEME.panel}>
-        <Box>
+      <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="row" alignItems="center" columnGap={1} flexWrap="wrap">
           <Text bold color={THEME.accent}>
             {money(u?.usd ?? 0)}
           </Text>
           {sep}
-          {pct === null ? (
-            <Text color={THEME.muted}>ctx --</Text>
-          ) : (
-            <Text color={levelColor(pct)}>
-              {bar(pct, MINI_BAR_CELLS)} {pct}%
-            </Text>
-          )}
+          {gauge}
+          {pct !== null && <Text color={levelColor(pct)}>{pct}%</Text>}
           {sep}
-          {g === null ? (
-            <Text color={THEME.muted}>no repo</Text>
-          ) : (
-            <Text color={dirty(g) ? THEME.warn : THEME.ok}>
-              {g.branch}
-              {g.ahead > 0 && ` ↑${g.ahead}`}
-              {g.behind > 0 && ` ↓${g.behind}`}
-              {dirty(g) && ` +${g.staged} ~${g.unstaged} ?${g.untracked}`}
-            </Text>
-          )}
-          {p && (
-            <>
-              {sep}
-              <Text bold color={THEME.text}>
-                #{p.number}
-              </Text>
-              <Text color={THEME.muted}> → {p.base}</Text>
-              {p.isDraft && <Text color={THEME.muted}> draft</Text>}
-              <Text color={ciColor(p)}>
-                {'  '}ci ✓{p.pass}
-                {p.fail > 0 && ` ✗${p.fail}`}
-                {p.pending > 0 && ` ⋯${p.pending}`}
-              </Text>
-              <Text color={p.unresolved > 0 ? THEME.warn : THEME.muted}>
-                {'  '}💬{p.unresolved}
-              </Text>
-              {p.hasCodex && <Text color={THEME.ok}>{'  '}codex ✓</Text>}
-            </>
-          )}
+          <Text color={g === null ? THEME.muted : dirty(g) ? THEME.warn : THEME.ok}>{gitLabel(g)}</Text>
+          {p && sep}
+          {p && <Text color={THEME.muted}>{prLabel(p, !isDesktop)}</Text>}
+          {p && <Text color={ciColor(p)}>{ciLabel(p)}</Text>}
+          {p && <Text color={p.unresolved > 0 ? THEME.warn : THEME.muted}>{`${p.unresolved} unresolved`}</Text>}
+          {p?.hasCodex && <Text color={THEME.ok}>codex ✓</Text>}
         </Box>
         {running.slice(0, MAX_AGENT_ROWS).map(a => (
-          <Box>
-            <Text color={THEME.accent}>◐ </Text>
+          <Box flexDirection="row" columnGap={1}>
+            <Text color={THEME.accent}>◐</Text>
             <Text color={THEME.text} wrap="truncate-end">
               {a.description}
             </Text>
             <Text color={THEME.muted}>
-              {'  '}
               {a.type} · {a.model} · {elapsed(t - a.startedAt)} · {a.tools} tools
             </Text>
           </Box>
