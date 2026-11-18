@@ -61,10 +61,15 @@ export const register: Register = on => {
     if (unpainted !== undefined) {
       $.ui.toast(unpainted)
     }
-    const set = await $.theme.set(LOOK)
 
-    if (!set.isDrawn) {
-      $.ui.status(set.reason)
+    try {
+      const set = await $.theme.set(LOOK)
+
+      if (!set.isDrawn) {
+        $.ui.status(set.reason)
+      }
+    } catch {
+      // headless sessions (claude -p) have no theme to set
     }
 
     return next(e)
