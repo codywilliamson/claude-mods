@@ -1,6 +1,7 @@
-import type { Register, ThemeColor, ThemeSetArgs } from 'claude-code'
+import type { Register, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
+import { SCENE } from './scene'
 
 // a quiet desk after the house has gone to sleep: graphite, ivory, a brass lamp
 const GRAPHITE = '#111418'
@@ -12,7 +13,6 @@ const SLATE = '#9ca6b3'
 const SLATE_MUTED = '#8a94a1'
 const BRASS = '#b99a68'
 const STEEL = '#7d93ad'
-const MIDNIGHT_EDGE = '#0e1421'
 
 const { theme, problems } = makeColors({
   label: 'After hours',
@@ -42,16 +42,13 @@ const { theme, problems } = makeColors({
   },
 })
 
-// graphite in the middle, drifting a hair toward midnight blue at the edges
-const EDGE_STOPS: readonly { at: number; color: ThemeColor }[] = [
-  { at: 0, color: GRAPHITE },
-  { at: 0.55, color: GRAPHITE },
-  { at: 1, color: MIDNIGHT_EDGE },
-]
+// a still ground can't move, so the backdrop is a scene drawn below
+const SCENE_NAME = 'after-hours'
 
 const LOOK: ThemeSetArgs = {
   colors: theme,
-  backdrop: { gradient: { shape: 'radial', stops: EDGE_STOPS } },
+  // panels stay solid: no frosted glass over the scene
+  backdrop: { scene: SCENE_NAME, glass: false },
 }
 
 export const register: Register = on => {
@@ -73,5 +70,20 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  on('ui.render', { component: 'Backdrop' }, ($, e, next) => {
+    if (e.surface !== 'desktop' && e.surface !== 'mobile') {
+      return next(e)
+    }
+    const { Svg } = $.ui.resolve(e)
+
+    return (
+      <Svg
+        source={SCENE}
+        alt="Lamplight at the lower left, faint rain on a dark window at the upper right"
+        isInteractive
+      />
+    )
   })
 }
